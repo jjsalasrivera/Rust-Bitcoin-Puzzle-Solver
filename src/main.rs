@@ -131,7 +131,7 @@ impl BitcoinChecker {
     }
 
     fn check_address_balance(&self, address: &str) -> bool {
-        address.as_bytes() == self.target.as_bytes()
+        address == self.target
     }
 
     fn log_found_address(
