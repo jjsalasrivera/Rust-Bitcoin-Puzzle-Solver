@@ -85,7 +85,6 @@ impl BitcoinChecker {
             let public_key = PublicKey::from_private_key(&self.secp, &key);
             let address = Address::p2pkh(&public_key, Network::Bitcoin);
 
-            info!("Dirección: {} -- {}", address, self.target);
             if address.to_string() == self.target {
                 info!("\n¡ENCONTRADA DIRECCIÓN CON BALANCE!");
                 info!("Clave Privada: {}", hex::encode(private_key));
