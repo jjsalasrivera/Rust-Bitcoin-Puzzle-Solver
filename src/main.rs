@@ -1,19 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{Write, BufWriter};
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bitcoin::key::Secp256k1;
-use bitcoin::{Address, CompressedPublicKey, Network, PrivateKey, PublicKey};
+use bitcoin::{Address, Network, PrivateKey, PublicKey};
 use log::{error, info, warn};
 use num_bigint::{BigUint, RandBigInt};
-use num_traits::{Num, Zero};
-use rand::{thread_rng, RngCore};
+use num_traits::Num;
+use rand::thread_rng;
 use rayon::prelude::*;
 
 const MAX_CHUNK: usize = 50_000;  // Chunk más grande para reducir overhead
@@ -51,7 +50,6 @@ impl BitcoinChecker {
 
     fn run(&self) {
         let mut last_log = Instant::now();
-        let target_addr = Address::from_str(&self.target).unwrap().assume_checked();
 
         loop {
             (0..MAX_CHUNK).into_par_iter().for_each(|_| {
@@ -80,11 +78,14 @@ impl BitcoinChecker {
 
     fn process_private_key(&self, private_key: &[u8]) {
         if let Ok(key) = PrivateKey::from_slice(private_key, Network::Bitcoin) {
-            let compressed_pk = CompressedPublicKey::from_private_key(&self.secp, &key);
+            //let compressed_pk = CompressedPublicKey::from_private_key(&self.secp, &key);
 
             // Dirección verificada con conversión explícita
-            let address = Address::p2wpkh(&compressed_pk.unwrap(), Network::Bitcoin);
+            //let address = Address::p2wpkh(&compressed_pk.unwrap(), Network::Bitcoin);
+            let public_key = PublicKey::from_private_key(&self.secp, &key);
+            let address = Address::p2pkh(&public_key, Network::Bitcoin);
 
+            info!("Dirección: {} -- {}", address, self.target);
             if address.to_string() == self.target {
                 info!("\n¡ENCONTRADA DIRECCIÓN CON BALANCE!");
                 info!("Clave Privada: {}", hex::encode(private_key));
@@ -156,11 +157,6 @@ fn main() {
 
     match puzzles.get(&numero) {
         Some((a, b, c)) => {
-            let targets: Vec<String> = puzzles
-                .values()
-                .map(|(_, _, target)| target.clone())
-                .collect();
-
             let checker = BitcoinChecker::new(a.to_string(), b.to_string(), c.to_string());
             info!("{}: {} {} {}", numero, a, b, c);
 
