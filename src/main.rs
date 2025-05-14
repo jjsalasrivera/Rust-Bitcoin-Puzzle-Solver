@@ -3,7 +3,7 @@ use std::env;
 use std::fs::OpenOptions;
 use std::io::{Write, BufWriter};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,7 @@ use rayon::prelude::*;
 
 const MAX_CHUNK: usize = 50_000;  // Chunk más grande para reducir overhead
 const SECONDS_LOG: u64 = 10;
+const FOUND_FILE: &str = "found.txt";
 
 struct BitcoinChecker {
     checked_addresses: Arc<AtomicUsize>,
@@ -25,6 +26,7 @@ struct BitcoinChecker {
     range_size: BigUint,
     target: String,
     secp: Secp256k1<bitcoin::secp256k1::All>,
+    found: Arc<AtomicBool>,
 }
 
 impl BitcoinChecker {
@@ -40,12 +42,20 @@ impl BitcoinChecker {
             range_size,
             target,
             secp: Secp256k1::new(),
+            found: Arc::new(AtomicBool::new(false))
         }
     }
 
     fn main(&self) {
-        info!("Iniciando búsqueda de direcciones entre {} y {}", self.from, self.to);
-        self.run();
+        // check if file exist
+        let path = Path::new(FOUND_FILE);
+        if path.exists()
+        {
+            info!("Private key found in {}", FOUND_FILE);
+        } else {
+            info!("Iniciando búsqueda de direcciones entre {} y {}", self.from, self.to);
+            self.run();
+        }
     }
 
     fn run(&self) {
@@ -73,6 +83,10 @@ impl BitcoinChecker {
                 );
                 last_log = Instant::now();
             }
+
+            if self.found.load(Ordering::Relaxed) {
+                break;
+            }
         }
     }
 
@@ -90,6 +104,7 @@ impl BitcoinChecker {
                 info!("Clave Privada: {}", hex::encode(private_key));
                 info!("WIF: {}", key.to_wif());
                 info!("Dirección: {}", address);
+                self.found.swap(true, Ordering::SeqCst);
 
                 if let Err(e) = Self::log_found_address(
                     private_key,
@@ -107,7 +122,7 @@ impl BitcoinChecker {
         wif: &str,
         address: &str
     ) -> Result<(), std::io::Error> {
-        let file_path = Path::new("found.txt");
+        let file_path = Path::new(FOUND_FILE);
         let file = OpenOptions::new()
             .create(true)
             .append(true)
