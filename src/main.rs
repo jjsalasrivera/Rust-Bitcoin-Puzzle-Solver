@@ -15,7 +15,7 @@ use num_traits::Num;
 use rand::thread_rng;
 use rayon::prelude::*;
 
-const MAX_CHUNK: usize = 50_000;  // Chunk más grande para reducir overhead
+const MAX_CHUNK: usize = 100_000;  // Chunk más grande para reducir overhead
 const SECONDS_LOG: u64 = 10;
 const FOUND_FILE: &str = "found.txt";
 
@@ -90,6 +90,7 @@ impl BitcoinChecker {
         }
     }
 
+    #[inline(always)]
     fn process_private_key(&self, private_key: &[u8]) {
         if let Ok(key) = PrivateKey::from_slice(private_key, Network::Bitcoin) {
             //let compressed_pk = CompressedPublicKey::from_private_key(&self.secp, &key);

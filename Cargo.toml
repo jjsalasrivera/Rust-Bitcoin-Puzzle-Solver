@@ -13,3 +13,10 @@ rand = "0.8.5"
 num-bigint = { version = "0.4.6", features = ["rand"] }
 num-traits = "0.2.19"
 hex = "0.4.3"
+
+[profile.release]
+opt-level = 3
+lto = true        # Link Time Optimization (Clave para inline de funciones criptográficas)
+codegen-units = 1 # Hace la compilación más lenta pero el código resultante más rápido
+panic = 'abort'
+debug = false
