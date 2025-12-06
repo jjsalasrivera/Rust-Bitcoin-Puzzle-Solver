@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::str::FromStr;
 
 use bitcoin::key::Secp256k1;
 use bitcoin::{Address, Network, PrivateKey, PublicKey};
@@ -24,9 +25,9 @@ struct BitcoinChecker {
     from: BigUint,
     to: BigUint,
     range_size: BigUint,
-    target: String,
     secp: Secp256k1<bitcoin::secp256k1::All>,
     found: Arc<AtomicBool>,
+    target_address: Address,
 }
 
 impl BitcoinChecker {
@@ -40,9 +41,10 @@ impl BitcoinChecker {
             from: from_num,
             to: to_num,
             range_size,
-            target,
             secp: Secp256k1::new(),
-            found: Arc::new(AtomicBool::new(false))
+            found: Arc::new(AtomicBool::new(false)),
+            target_address: Address::from_str(&target).unwrap()
+                .require_network(Network::Bitcoin).unwrap(),
         }
     }
 
@@ -100,7 +102,7 @@ impl BitcoinChecker {
             let public_key = PublicKey::from_private_key(&self.secp, &key);
             let address = Address::p2pkh(&public_key, Network::Bitcoin);
 
-            if address.to_string() == self.target {
+            if address == self.target_address {
                 info!("\n¡ENCONTRADA DIRECCIÓN CON BALANCE!");
                 info!("Clave Privada: {}", hex::encode(private_key));
                 info!("WIF: {}", key.to_wif());
