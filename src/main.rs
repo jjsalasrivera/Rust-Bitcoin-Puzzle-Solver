@@ -74,6 +74,7 @@ impl BitcoinChecker {
 
     fn run_with_rejection(&self) {
         let mut last_log = Instant::now();
+        let mut lasts_checks: usize = 0;
 
         loop {
             (0..MAX_CHUNK).into_par_iter().for_each(|_| {
@@ -113,10 +114,15 @@ impl BitcoinChecker {
             self.checked_addresses.fetch_add(MAX_CHUNK, Ordering::Relaxed);
 
             if last_log.elapsed() >= Duration::from_secs(SECONDS_LOG) {
-                info!("Direcciones revisadas: {}",
-                    self.checked_addresses.load(Ordering::Relaxed)
+                let total_checked = self.checked_addresses.load(Ordering::Relaxed);
+                let elapsed = last_log.elapsed().as_secs() as usize;
+                let partial_checks = total_checked - lasts_checks;
+
+                info!("Direcciones revisadas: {} - Tasa de calculo: {} addr/s",
+                    self.checked_addresses.load(Ordering::Relaxed), partial_checks / elapsed
                 );
                 last_log = Instant::now();
+                lasts_checks = total_checked;
             }
 
             if self.found.load(Ordering::Relaxed) {
