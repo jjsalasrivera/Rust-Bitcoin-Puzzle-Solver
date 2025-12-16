@@ -12,10 +12,10 @@ use bitcoin::key::Secp256k1;
 use bitcoin::{Address, Network, PrivateKey, PublicKey};
 use log::{error, info, warn};
 use rand::{Rng, SeedableRng};
-use rand::rngs::SmallRng;
+use rand_chacha::ChaCha20Rng;
 use rayon::prelude::*;
 
-const MAX_CHUNK: usize = 100_000;  // Chunk más grande para reducir overhead
+const MAX_CHUNK: usize = 1_000_000;  // Chunk más grande para reducir overhead
 const SECONDS_LOG: u64 = 10;
 const FOUND_FILE: &str = "found.txt";
 
@@ -79,8 +79,8 @@ impl BitcoinChecker {
         loop {
             (0..MAX_CHUNK).into_par_iter().for_each(|_| {
                 thread_local! {
-                    static RNG: std::cell::RefCell<SmallRng> =
-                        std::cell::RefCell::new(SmallRng::from_entropy());
+                    static RNG: std::cell::RefCell<ChaCha20Rng> =
+                        std::cell::RefCell::new(ChaCha20Rng::from_entropy());
                 }
 
                 let mut key_bytes = [0u8; 32];
@@ -137,8 +137,8 @@ impl BitcoinChecker {
         loop {
             (0..MAX_CHUNK).into_par_iter().for_each(|_| {
                 thread_local! {
-                    static RNG: std::cell::RefCell<SmallRng> =
-                        std::cell::RefCell::new(SmallRng::from_entropy());
+                    static RNG: std::cell::RefCell<ChaCha20Rng> =
+                        std::cell::RefCell::new(ChaCha20Rng::from_entropy());
                 }
 
                 let key_bytes = RNG.with(|rng| {
