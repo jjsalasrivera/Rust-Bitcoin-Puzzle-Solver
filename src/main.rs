@@ -11,11 +11,9 @@ use std::str::FromStr;
 use bitcoin::key::Secp256k1;
 use bitcoin::{Address, Network, PrivateKey, PublicKey};
 use log::{error, info, warn};
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use rand::Rng;
 use rayon::prelude::*;
 
-const MAX_CHUNK: usize = 1_000_000;  // Chunk más grande para reducir overhead
 const SECONDS_LOG: u64 = 10;
 const FOUND_FILE: &str = "found.txt";
 
@@ -27,24 +25,13 @@ struct BitcoinChecker {
     secp: Secp256k1<bitcoin::secp256k1::All>,
     found: Arc<AtomicBool>,
     target_address: Address,
-    mask: u128,
-    needs_rejection: bool,
 }
 
 impl BitcoinChecker {
     fn new(from: String, to: String, target: String) -> Self {
         let from_num = u128::from_str_radix(from.as_str(), 16).expect("invalid 'from' number");
         let to_num = u128::from_str_radix(to.as_str(), 16).expect("invalid 'to' number");
-        let range_size = &to_num - &from_num;
-        let num_bits = 128 - range_size.leading_zeros();
-
-        let mask = if num_bits >= 128 {
-            u128::MAX
-        } else {
-            (1u128 << num_bits) - 1
-        };
-        let is_power_of_two = range_size.count_ones() == 1;
-        let needs_rejection = !is_power_of_two;
+        let range_size = to_num - from_num;
 
         BitcoinChecker {
             checked_addresses: Arc::new(AtomicUsize::new(0)),
@@ -55,8 +42,6 @@ impl BitcoinChecker {
             found: Arc::new(AtomicBool::new(false)),
             target_address: Address::from_str(&target).unwrap()
                 .require_network(Network::Bitcoin).unwrap(),
-            mask,
-            needs_rejection,
         }
     }
 
@@ -72,162 +57,71 @@ impl BitcoinChecker {
         }
     }
 
-    fn run_with_rejection(&self) {
+
+
+    fn run(&self) {
+        let num_threads = rayon::current_num_threads() as u128;
+        let sub_range_size = self.range_size / num_threads;
+        let block_size = 100_000u128;
         let mut last_log = Instant::now();
-        let mut lasts_checks: usize = 0;
+        let mut last_checks = 0;
 
         loop {
-            (0..MAX_CHUNK).into_par_iter().for_each(|_| {
-                thread_local! {
-                    static RNG: std::cell::RefCell<ChaCha20Rng> =
-                        std::cell::RefCell::new(ChaCha20Rng::from_entropy());
-                }
+            if self.found.load(Ordering::Relaxed) {
+                break;
+            }
 
+            (0..num_threads as usize).into_par_iter().for_each(|thread_id| {
+                let sub_from = self.from + thread_id as u128 * sub_range_size;
+                let sub_to = if thread_id as u128 == num_threads - 1 { self.to } else { sub_from + sub_range_size };
+                let max_start = sub_to.saturating_sub(block_size);
+                let start = if sub_from > max_start { sub_from } else {
+                    let mut rng = rand::thread_rng();
+                    rng.gen_range(sub_from..=max_start)
+                };
+                
                 let mut key_bytes = [0u8; 32];
-
-                RNG.with(|rng| {
-                    let mut rng = rng.borrow_mut();
-
-                    let random_num = loop {
-                        // Genera 16 bytes aleatorios
-                        let mut temp_bytes = [0u8; 16];
-                        rng.fill(&mut temp_bytes[..]);
-                        let random = u128::from_be_bytes(temp_bytes);
-
-                        // Aplica máscara
-                        let masked = random & self.mask;
-
-                        // Rejection sampling
-                        if masked < self.range_size {
-                            break self.from + masked;
-                        }
-                    };
-
-                    // Convierte a bytes
-                    let num_bytes = random_num.to_be_bytes();
+                let mut local_found = false;
+                
+                for i in 0..block_size {
+                    let num = start + i;
+                    let num_bytes = num.to_be_bytes();
                     key_bytes[16..].copy_from_slice(&num_bytes);
-                });
+                    
+                    if let Ok(key) = PrivateKey::from_slice(&key_bytes, Network::Bitcoin) {
+                        let public_key = PublicKey::from_private_key(&self.secp, &key);
+                        let address = Address::p2pkh(&public_key, Network::Bitcoin);
 
-                self.process_private_key(&key_bytes);
+                        if address == self.target_address {
+                            info!("\n¡ENCONTRADA DIRECCIÓN CON BALANCE!");
+                            info!("Clave Privada: {}", hex::encode(&key_bytes));
+                            info!("WIF: {}", key.to_wif());
+                            info!("Dirección: {}", address);
+                            self.found.swap(true, Ordering::SeqCst);
+                            local_found = true;
+
+                            if let Err(e) = Self::log_found_address(
+                                &key_bytes,
+                                &key.to_wif(),
+                                &address.to_string()
+                            ) {
+                                warn!("Error al escribir en archivo: {}", e);
+                            }
+                        }
+                    }
+                }
             });
 
-            self.checked_addresses.fetch_add(MAX_CHUNK, Ordering::Relaxed);
+            self.checked_addresses.fetch_add((num_threads as u128 * block_size) as usize, Ordering::Relaxed);
 
             if last_log.elapsed() >= Duration::from_secs(SECONDS_LOG) {
                 let total_checked = self.checked_addresses.load(Ordering::Relaxed);
-                let elapsed = last_log.elapsed().as_secs() as usize;
-                let partial_checks = total_checked - lasts_checks;
-
-                info!("Direcciones revisadas: {} - Tasa de calculo: {} addr/s",
-                    self.checked_addresses.load(Ordering::Relaxed), partial_checks / elapsed
-                );
+                let elapsed = last_log.elapsed().as_secs_f64();
+                let partial_checks = (total_checked - last_checks) as f64;
+                let rate = (partial_checks / elapsed) as u64;
+                info!("Direcciones revisadas: {} - Tasa de calculo: {} addr/s", total_checked, rate);
                 last_log = Instant::now();
-                lasts_checks = total_checked;
-            }
-
-            if self.found.load(Ordering::Relaxed) {
-                break;
-            }
-        }
-    }
-
-    fn run_without_rejection(&self) {
-        let mut last_log = Instant::now();
-
-        loop {
-            (0..MAX_CHUNK).into_par_iter().for_each(|_| {
-                thread_local! {
-                    static RNG: std::cell::RefCell<ChaCha20Rng> =
-                        std::cell::RefCell::new(ChaCha20Rng::from_entropy());
-                }
-
-                let key_bytes = RNG.with(|rng| {
-                    let mut rng = rng.borrow_mut();
-                    let mut key = [0u8; 32];
-
-                    // Genera solo los últimos 16 bytes
-                    rng.fill(&mut key[16..]);
-
-                    // Lee como u128, aplica máscara y offset
-                    let mut num = u128::from_be_bytes([
-                        key[16], key[17], key[18], key[19],
-                        key[20], key[21], key[22], key[23],
-                        key[24], key[25], key[26], key[27],
-                        key[28], key[29], key[30], key[31],
-                    ]);
-
-                    num &= self.mask;
-                    num += self.from;
-
-                    // Escribe de vuelta
-                    let final_bytes = num.to_be_bytes();
-                    key[16..].copy_from_slice(&final_bytes);
-
-                    key
-                });
-
-                self.process_private_key(&key_bytes);
-            });
-
-            self.checked_addresses.fetch_add(MAX_CHUNK, Ordering::Relaxed);
-
-            if last_log.elapsed() >= Duration::from_secs(SECONDS_LOG) {
-                info!("Direcciones revisadas: {}",
-                    self.checked_addresses.load(Ordering::Relaxed)
-                );
-                last_log = Instant::now();
-            }
-
-            if self.found.load(Ordering::Relaxed) {
-                break;
-            }
-        }
-    }
-
-    fn run(&self) {
-        if self.needs_rejection {
-            // Calcula tasa de rechazo esperada
-            let rejection_rate = 1.0 - (self.range_size as f64 / (self.mask as f64 + 1.0));
-
-            // Si la tasa de rechazo es baja (<10%), usa rejection sampling
-            // Si es alta, usa el método sin rejection (sesgo despreciable)
-            if rejection_rate < 0.10 {
-                println!("Usando rejection sampling (tasa rechazo: {:.2}%)", rejection_rate * 100.0);
-                self.run_with_rejection();
-            } else {
-                println!("Usando método sin rejection (sesgo despreciable para búsqueda)");
-                self.run_without_rejection();
-            }
-        } else {
-            println!("Rango es potencia de 2 - sin rejection necesario");
-            self.run_without_rejection();
-        }
-    }
-
-    #[inline(always)]
-    fn process_private_key(&self, private_key: &[u8]) {
-        if let Ok(key) = PrivateKey::from_slice(private_key, Network::Bitcoin) {
-            //let compressed_pk = CompressedPublicKey::from_private_key(&self.secp, &key);
-
-            // Dirección verificada con conversión explícita
-            //let address = Address::p2wpkh(&compressed_pk.unwrap(), Network::Bitcoin);
-            let public_key = PublicKey::from_private_key(&self.secp, &key);
-            let address = Address::p2pkh(&public_key, Network::Bitcoin);
-
-            if address == self.target_address {
-                info!("\n¡ENCONTRADA DIRECCIÓN CON BALANCE!");
-                info!("Clave Privada: {}", hex::encode(private_key));
-                info!("WIF: {}", key.to_wif());
-                info!("Dirección: {}", address);
-                self.found.swap(true, Ordering::SeqCst);
-
-                if let Err(e) = Self::log_found_address(
-                    private_key,
-                    &key.to_wif(),
-                    &address.to_string()
-                ) {
-                    warn!("Error al escribir en archivo: {}", e);
-                }
+                last_checks = total_checked;
             }
         }
     }
