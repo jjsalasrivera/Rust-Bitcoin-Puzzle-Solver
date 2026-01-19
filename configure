@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Script de configuración para el proyecto C++
+# Este script verifica las dependencias y las instala si es necesario
+
+set -e
+
+echo "=========================================="
+echo "Configurando proyecto C++ Bitcoin Puzzle"
+echo "=========================================="
+
+# Detectar sistema operativo
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    OS="linux"
+    PACKAGE_MANAGER=""
+    
+    # Detectar gestor de paquetes
+    if command -v apt-get &> /dev/null; then
+        PACKAGE_MANAGER="apt"
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libssl-dev
+    elif command -v yum &> /dev/null; then
+        PACKAGE_MANAGER="yum"
+        sudo yum install -y cmake gcc-c++ openssl-devel
+    elif command -v pacman &> /dev/null; then
+        PACKAGE_MANAGER="pacman"
+        sudo pacman -S --noconfirm cmake base-devel openssl
+    fi
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    OS="macos"
+    echo "Detectado macOS"
+    
+    # Verificar si Homebrew está instalado
+    if ! command -v brew &> /dev/null; then
+        echo "Instalando Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+    
+    echo "Instalando dependencias con Homebrew..."
+    brew install cmake openssl
+elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    OS="windows"
+    echo "Detectado Windows"
+    echo "Por favor, instale CMake y OpenSSL manualmente desde sus sitios web"
+    exit 1
+else
+    echo "Sistema operativo no soportado"
+    exit 1
+fi
+
+echo "==========================================="
+echo "Verificando herramientas necesarias..."
+echo "==========================================="
+
+# Verificar CMake
+if ! command -v cmake &> /dev/null; then
+    echo "ERROR: CMake no está instalado"
+    exit 1
+fi
+echo "✓ CMake: $(cmake --version | head -n1)"
+
+# Verificar compilador C++
+if ! command -v g++ &> /dev/null && ! command -v clang++ &> /dev/null; then
+    echo "ERROR: No se encontró compilador C++ (g++ o clang++)"
+    exit 1
+fi
+
+if command -v g++ &> /dev/null; then
+    echo "✓ Compilador: $(g++ --version | head -n1)"
+else
+    echo "✓ Compilador: $(clang++ --version | head -n1)"
+fi
+
+# Verificar Git
+if ! command -v git &> /dev/null; then
+    echo "Advertencia: Git no está instalado. Las dependencias podrían no descargarse correctamente"
+fi
+
+echo "==========================================="
+echo "Creando directorio de compilación..."
+echo "==========================================="
+
+mkdir -p build
+cd build
+
+echo "==========================================="
+echo "Configurando CMake..."
+echo "==========================================="
+
+cmake -DCMAKE_BUILD_TYPE=Release ..
+
+echo "==========================================="
+echo "¡Configuración completada!"
+echo "==========================================="
+echo ""
+echo "Ahora ejecute: make"
+echo "o si está en el directorio build: cmake --build . --config Release"
+echo ""
